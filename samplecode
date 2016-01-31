@@ -1,0 +1,113 @@
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace WpfPeformanceApplication1.logic
+{
+	internal class ThreadPoolEventer
+	{
+		private AutoResetEvent _requestRunEvent;
+
+		private CancellationTokenSource _tokenSource;
+
+		private int _maxThreadCount;
+
+		private ConcurrentQueue<int> _taskQ;
+
+		private int taskcount = 0;
+
+		public void AddTask()
+		{
+			Console.WriteLine("要求開始[" + Thread.CurrentContext + "]");
+			this._taskQ.Enqueue(1);
+			if (this._taskQ.Count == 1)
+			{
+				Task.Run(delegate
+				{
+					Console.WriteLine("開始シグナル");
+					this._requestRunEvent.Set();
+				});
+			}
+			Console.WriteLine("要求終了[" + Thread.CurrentContext + "]");
+		}
+
+		public void Run(int maxThreadCount)
+		{
+			if (this._requestRunEvent == null)
+			{
+				this.Init(maxThreadCount);
+				for (int i = 0; i < this._maxThreadCount; i++)
+				{
+					Task.Run(delegate
+					{
+						try
+						{
+							while (true)
+							{
+								try
+								{
+									Console.WriteLine("タスク待ち[" + Thread.CurrentContext.ContextID + "]");
+									this._requestRunEvent.WaitOne();
+									Console.WriteLine(string.Concat(new object[]
+									{
+										"タスクスタート[",
+										Thread.CurrentContext.ContextID,
+										"][",
+										++this.taskcount,
+										"]"
+									}));
+									Thread.Sleep(5000);
+									this._tokenSource.Token.ThrowIfCancellationRequested();
+									Console.WriteLine("タスク終了[" + Thread.CurrentContext.ContextID + "]");
+								}
+								finally
+								{
+									int r;
+									this._taskQ.TryDequeue(out r);
+									if (this._taskQ.Count > 0)
+									{
+										Task.Run(delegate
+										{
+											Thread.Sleep(1000);
+											Console.WriteLine("開始シグナル");
+											this._requestRunEvent.Set();
+										});
+									}
+								}
+							}
+						}
+						catch (OperationCanceledException e)
+						{
+							Console.WriteLine(e);
+						}
+					}, this._tokenSource.Token);
+				}
+			}
+		}
+
+		private void Init(int maxThreadCount)
+		{
+			this._maxThreadCount = maxThreadCount;
+			this._taskQ = new ConcurrentQueue<int>();
+			this._requestRunEvent = new AutoResetEvent(true);
+			this._tokenSource = new CancellationTokenSource();
+		}
+
+		public void Cancel()
+		{
+			if (this._tokenSource != null)
+			{
+				for (int i = 0; i < this._maxThreadCount; i++)
+				{
+					if (this._requestRunEvent != null)
+					{
+						this._requestRunEvent.Set();
+					}
+				}
+				this._tokenSource.Cancel();
+				this._requestRunEvent = null;
+			}
+		}
+	}
+}
